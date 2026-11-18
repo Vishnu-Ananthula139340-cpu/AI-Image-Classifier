@@ -3,170 +3,355 @@ import streamlit as st
 import torch
 from torchvision import models
 from PIL import Image
+import io
+import csv
 
 # ==========================================
-# 1. PAGE SETUP
+# 1. PAGE CONFIGURATION
 # ==========================================
 
 st.set_page_config(
-    page_title="AI Image Classifier",
-    page_icon="📷",
-    layout="centered"
+    page_title="VisionAI - Image Classifier",
+    page_icon="📸",
+    layout="wide"
 )
 
+st.markdown("""
+<style>
+.main {
+    background-color: #101525;
+}
+h1, h2, h3 {
+    color: #ffffff;
+}
+div[data-testid="stMetric"] {
+    background: #202b43;
+    padding: 15px;
+    border-radius: 12px;
+}
+div.stButton > button {
+    background: linear-gradient(90deg, #2563eb, #9333ea);
+    color: white;
+    border-radius: 12px;
+    border: none;
+    font-weight: bold;
+    min-height: 45px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
 # ==========================================
-# 2. LOAD PRETRAINED AI MODEL
+# 2. LOAD RESNET50 AI MODEL
 # ==========================================
 
 @st.cache_resource
 def load_model():
 
-    # Load pretrained MobileNetV2 model
-    weights = models.MobileNet_V2_Weights.DEFAULT
+    weights = models.ResNet50_Weights.DEFAULT
 
-    model = models.mobilenet_v2(weights=weights)
+    model = models.resnet50(weights=weights)
 
-    # Set model to evaluation mode
     model.eval()
 
-    # Get ImageNet category names
     categories = weights.meta["categories"]
 
-    # Get the correct preprocessing steps
     preprocess = weights.transforms()
 
     return model, categories, preprocess
 
 
-# Load model
-model, categories, preprocess = load_model()
-
-
-# ==========================================
-# 3. IMAGE PREPROCESSING
-# ==========================================
-
-def process_image(image):
-
-    # Convert image into RGB format
-    image = image.convert("RGB")
-
-    # Apply preprocessing
-    input_tensor = preprocess(image)
-
-    # Add batch dimension
-    input_batch = input_tensor.unsqueeze(0)
-
-    return input_batch
-
-
-# ==========================================
-# 4. WEBSITE TITLE AND DESCRIPTION
-# ==========================================
-
-st.title("📷 AI Image Classifier")
+st.title("📸 VisionAI")
+st.subheader("Advanced AI Image Classification")
 
 st.write(
-    "Upload an image and let Artificial Intelligence "
-    "identify the objects in your picture!"
+    "Upload multiple photographs and let AI "
+    "identify their contents."
 )
 
 st.info(
-    "This application uses MobileNetV2 "
-    "trained on the ImageNet dataset."
+    "Powered by PyTorch and ResNet50 "
+    "with pretrained ImageNet weights."
 )
 
 
 # ==========================================
-# 5. IMAGE UPLOAD SECTION
+# 3. LOAD MODEL
 # ==========================================
 
-uploaded_file = st.file_uploader(
-    "Choose an image...",
-    type=["jpg", "jpeg", "png"]
+with st.spinner("Loading AI model..."):
+
+    model, categories, preprocess = load_model()
+
+st.success("AI model is ready!")
+
+
+# ==========================================
+# 4. MULTIPLE IMAGE UPLOAD
+# ==========================================
+
+st.header("📂 Upload Your Images")
+
+uploaded_files = st.file_uploader(
+    "Choose multiple images",
+    type=["jpg", "jpeg", "png"],
+    accept_multiple_files=True
 )
 
+MAX_IMAGES = 10
 
-# ==========================================
-# 6. IMAGE CLASSIFICATION
-# ==========================================
+if uploaded_files:
 
-if uploaded_file is not None:
-
-    try:
-
-        # Open uploaded image
-        image = Image.open(uploaded_file).convert("RGB")
-
-        # Display uploaded image
-        st.image(
-            image,
-            caption="Uploaded Image",
-            use_container_width=True
+    if len(uploaded_files) > MAX_IMAGES:
+        st.warning(
+            f"Only the first {MAX_IMAGES} images "
+            "will be processed in this batch."
         )
 
-        st.write("### 🔍 Classifying your image...")
+    selected_files = uploaded_files[:MAX_IMAGES]
 
-        # Prepare image
-        input_batch = process_image(image)
+    st.write(
+        f"**{len(selected_files)} images selected**"
+    )
 
-        # Perform AI prediction
-        with torch.inference_mode():
-            output = model(input_batch)
+    # ======================================
+    # 5. IMAGE PREVIEW
+    # ======================================
 
-        # Calculate probabilities
-        probabilities = torch.nn.functional.softmax(
-            output[0],
-            dim=0
-        )
+    st.subheader("Image Gallery")
 
-        # Get top 3 predictions
-        top3_prob, top3_catid = torch.topk(
-            probabilities,
-            3
-        )
+    preview_columns = st.columns(3)
 
-        # ======================================
-        # 7. DISPLAY PREDICTION RESULTS
-        # ======================================
+    for i, uploaded_file in enumerate(selected_files):
 
-        st.subheader("🏆 Top 3 Predictions")
+        try:
 
-        for i in range(3):
+            image = Image.open(
+                io.BytesIO(uploaded_file.getvalue())
+            ).convert("RGB")
 
-            # Get object name
-            class_name = categories[
-                top3_catid[i].item()
-            ]
+            with preview_columns[i % 3]:
 
-            # Calculate confidence percentage
-            confidence = top3_prob[i].item() * 100
+                st.image(
+                    image,
+                    caption=uploaded_file.name,
+                    use_container_width=True
+                )
 
-            # Display prediction
-            st.write(
-                f"**{i + 1}. {class_name.capitalize()}**"
+        except Exception:
+            st.warning(
+                f"Could not open {uploaded_file.name}"
             )
 
-            st.progress(confidence / 100)
 
-            st.write(
-                f"Confidence: {confidence:.2f}%"
+    # ======================================
+    # 6. CLASSIFY ALL IMAGES
+    # ======================================
+
+    if st.button(
+        "🚀 CLASSIFY ALL IMAGES",
+        use_container_width=True
+    ):
+
+        valid_images = []
+
+        results = []
+
+        for uploaded_file in selected_files:
+
+            try:
+
+                image = Image.open(
+                    io.BytesIO(uploaded_file.getvalue())
+                ).convert("RGB")
+
+                tensor = preprocess(image)
+
+                valid_images.append({
+                    "name": uploaded_file.name,
+                    "image": image,
+                    "tensor": tensor
+                })
+
+            except Exception as error:
+
+                st.error(
+                    f"Error reading {uploaded_file.name}: {error}"
+                )
+
+
+        if valid_images:
+
+            progress = st.progress(0)
+
+            status = st.empty()
+
+            # Process in small batches
+            batch_size = 2
+
+            total = len(valid_images)
+
+            for start in range(0, total, batch_size):
+
+                batch = valid_images[
+                    start:start + batch_size
+                ]
+
+                input_batch = torch.stack([
+                    item["tensor"] for item in batch
+                ])
+
+                with torch.inference_mode():
+
+                    output = model(input_batch)
+
+                    probabilities = torch.nn.functional.softmax(
+                        output,
+                        dim=1
+                    )
+
+                    top_prob, top_ids = torch.topk(
+                        probabilities,
+                        k=3,
+                        dim=1
+                    )
+
+                for index, item in enumerate(batch):
+
+                    predictions = []
+
+                    for rank in range(3):
+
+                        class_id = top_ids[
+                            index, rank
+                        ].item()
+
+                        confidence = top_prob[
+                            index, rank
+                        ].item() * 100
+
+                        predictions.append({
+                            "class": categories[class_id],
+                            "confidence": confidence
+                        })
+
+                    results.append({
+                        "name": item["name"],
+                        "image": item["image"],
+                        "predictions": predictions
+                    })
+
+                completed = min(start + len(batch), total)
+
+                progress.progress(completed / total)
+
+                status.write(
+                    f"Classified {completed} of {total} images"
+                )
+
+
+            # ==================================
+            # 7. DISPLAY RESULTS
+            # ==================================
+
+            st.success(
+                "All selected images have been processed!"
             )
 
-            st.divider()
+            st.header("🏆 Classification Results")
 
-        st.success("Image classification completed!")
+            st.metric(
+                "Images classified",
+                len(results)
+            )
 
-    except Exception as e:
+            for number, result in enumerate(results, 1):
 
-        st.error(f"Something went wrong: {e}")
+                with st.expander(
+                    f"Image {number}: {result['name']}",
+                    expanded=True
+                ):
+
+                    left, right = st.columns([1, 1])
+
+                    with left:
+
+                        st.image(
+                            result["image"],
+                            use_container_width=True
+                        )
+
+                    with right:
+
+                        st.write("### Top 3 Predictions")
+
+                        for rank, prediction in enumerate(
+                            result["predictions"], 1
+                        ):
+
+                            confidence = prediction["confidence"]
+
+                            st.write(
+                                f"**{rank}. {prediction['class']}**"
+                            )
+
+                            st.progress(
+                                min(confidence / 100, 1.0)
+                            )
+
+                            st.caption(
+                                f"Model score: {confidence:.2f}%"
+                            )
+
+            # ==================================
+            # 8. DOWNLOAD CSV REPORT
+            # ==================================
+
+            csv_buffer = io.StringIO()
+
+            writer = csv.writer(csv_buffer)
+
+            writer.writerow([
+                "Image Name",
+                "Rank",
+                "Predicted Class",
+                "Model Score (%)"
+            ])
+
+            for result in results:
+
+                for rank, prediction in enumerate(
+                    result["predictions"], 1
+                ):
+
+                    writer.writerow([
+                        result["name"],
+                        rank,
+                        prediction["class"],
+                        f"{prediction['confidence']:.2f}"
+                    ])
+
+            st.download_button(
+                label="📥 Download All Results (CSV)",
+                data=csv_buffer.getvalue(),
+                file_name="visionai_results.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
 
 
 # ==========================================
-# 8. FOOTER
+# 9. FOOTER
 # ==========================================
+
+st.divider()
 
 st.caption(
-    "AI Image Classifier | Powered by PyTorch "
-    "and MobileNetV2"
+    "VisionAI | Powered by PyTorch and ResNet50"
+)
+
+st.caption(
+    "Predictions are model estimates, not guaranteed "
+    "identifications. Confidence scores are not "
+    "measured accuracy."
 )
